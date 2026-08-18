@@ -1,0 +1,39 @@
+# Tracer-GOV x Liferay - Compose (Fase 1)
+# tracer-gov-service (FastAPI) on the same network as the Liferay portal.
+# The OSGi bundle (Fase 2) will call http://tracer-gov-service:8601.
+#
+# Usage:
+#   cp tracer-gov-service/.env.example tracer-gov-service/.env   # fill the API key
+#   docker compose up -d
+services:
+  tracer-gov-service:
+    build:
+      context: .
+      dockerfile: tracer-gov-service/Dockerfile
+    container_name: tracer-gov-service
+    ports:
+      - "8601:8601"
+    env_file:
+      - tracer-gov-service/.env
+    environment:
+      TRACER_GOV_WORM_PATH: /var/lib/tracer-gov/worm
+    volumes:
+      - tracer-gov-worm:/var/lib/tracer-gov/worm
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://localhost:8601/v1/health', timeout=5)"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    networks:
+      - tracer-gov-net
+
+volumes:
+  tracer-gov-worm:
+
+networks:
+  tracer-gov-net:
+    driver: bridge

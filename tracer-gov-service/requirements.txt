@@ -1,0 +1,6 @@
+# tracer-gov-service - Government Audit Bridge for Liferay
+# Reuses the real tracer-gov package + winnex-madhava (numpy only).
+winnex-madhava==1.8.8
+fastapi>=0.100
+uvicorn>=0.20
+numpy>=1.24
