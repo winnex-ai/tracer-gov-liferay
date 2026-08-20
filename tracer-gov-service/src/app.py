@@ -179,7 +179,7 @@ def _get_engine(jurisdiction: str, mode: str, state: str = ""):
 def health():
     return {
         "status": "ok",
-        "engine": "tracer-gov + winnex-madhava 1.8.8",
+        "engine": "tracer-gov + winnex-madhava 1.9.1",
         "engines": list(_engines.keys()),
         "timestamp": time.time(),
     }
@@ -214,7 +214,7 @@ def build(req: BuildRequest):
         "mode": engine.config.mode,
         "N": int(getattr(engine, "_N", vectors.shape[0])),
         "dim": int(vectors.shape[1]),
-        "engine": "tracer-gov + winnex-madhava 1.8.8",
+        "engine": "tracer-gov + winnex-madhava 1.9.1",
         "latency_ms": round(latency, 3),
     }
 
