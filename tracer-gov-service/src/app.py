@@ -146,17 +146,7 @@ def _engine_key(jurisdiction: str, mode: str, state: str = "") -> str:
 def _get_engine(jurisdiction: str, mode: str, state: str = ""):
     key = _engine_key(jurisdiction, mode, state)
     if key not in _engines:
-        try:
-            from core import TracerEngine, Config
-        except ImportError:
-            # When run from the tracer-gov source tree, core is importable.
-            import sys
-            for p in ("/opt/tracer-gov", "/app/tracer-gov"):
-                if os.path.isdir(p):
-                    sys.path.insert(0, p)
-                    break
-            from core import TracerEngine, Config
-
+        from winnex_tracer.gov.core import TracerEngine, Config
         cfg = Config(
             jurisdiction=jurisdiction,
             mode=mode,
@@ -230,7 +220,7 @@ def search(req: SearchRequest):
         raise HTTPException(
             409, "No index built. Call POST /v1/tracer/build first.")
 
-    from core import GovMetadata
+    from winnex_tracer.gov.core import GovMetadata
 
     metadata_data = {
         "requesting_agency": req.requesting_agency,
@@ -254,7 +244,7 @@ def search(req: SearchRequest):
     # return real data. Persistence must never fail the search.
     receipt = {}
     try:
-        from persistence import WormStorage
+        from winnex_tracer.persistence import WormStorage
         worm = WormStorage(base_path=engine.config.worm_base_path)
 
         def _native(v):
@@ -264,35 +254,75 @@ def search(req: SearchRequest):
                 return {k: _native(x) for k, x in v.items()}
             return v.item() if hasattr(v, "item") else v
 
-        record = {
-            "audit_id": metadata.audit_id,
-            "jurisdiction": result.jurisdiction,
-            "mode": result.mode,
-            "state": result.state,
-            "language": result.language,
-            "metadata": metadata.to_dict(),
-            "result": {
-                "indices": _native(result.indices),
-                "scores": [round(float(s), 6) for s in result.scores],
-                "bound_violations": int(result.violations_64d),
-                "bound_pairs": int(result.bound_pairs),
-                "total_excluded": int(result.total_excluded),
-                "engine_used": result.engine_used,
-                "latency_ms": round(latency, 3),
-            },
-            "audit": [
-                {
-                    "doc_id": r.doc_id,
-                    "upper_bound": float(r.upper_bound),
-                    "threshold": float(r.threshold),
-                    "excluded": bool(r.excluded),
-                    "verdict": r.verdict,
-                }
-                for r in result.audit
-            ],
-            "signature": result.signature,
-            "signature_algorithm": result.signature_algorithm,
-        }
+        if result.commitment is not None:
+            # --- PRODUCTION (1.9.2+) : the signed lightweight commitment.
+            # The motor returned a ~500-byte AuditCommitment already signed
+            # with Ed25519 by the compliance layer (core.commitment). The WORM
+            # stores the SIGNED commitment UNCHANGED (so the signature remains
+            # valid) plus a _ctx block with the contextual government fields.
+            # verify_record operates on the `commitment` sub-block — the
+            # _ctx/metadata/result fields are NOT part of the signed payload.
+            record = {
+                "commitment": result.commitment,   # the signed payload (intact)
+                "_ctx": {
+                    "jurisdiction": result.jurisdiction,
+                    "mode": result.mode,
+                    "state": result.state,
+                    "language": result.language,
+                    "metadata": metadata.to_dict(),
+                    "result": {
+                        "indices": _native(result.indices),
+                        "scores": [round(float(s), 6) for s in result.scores],
+                        "bound_violations": int(result.violations_64d),
+                        "bound_pairs": int(result.bound_pairs),
+                        "total_excluded": int(result.total_excluded),
+                        "engine_used": result.engine_used,
+                        "latency_ms": round(latency, 3),
+                    },
+                    # boundary sample (light) — NOT the full certificate
+                    "audit": [
+                        {
+                            "doc_id": r.doc_id,
+                            "upper_bound": float(r.upper_bound),
+                            "threshold": float(r.threshold),
+                            "excluded": bool(r.excluded),
+                            "verdict": r.verdict,
+                        }
+                        for r in result.audit
+                    ],
+                },
+            }
+        else:
+            # Legacy path (< 1.9.2 or non-madhava backend): full record.
+            record = {
+                "audit_id": metadata.audit_id,
+                "jurisdiction": result.jurisdiction,
+                "mode": result.mode,
+                "state": result.state,
+                "language": result.language,
+                "metadata": metadata.to_dict(),
+                "result": {
+                    "indices": _native(result.indices),
+                    "scores": [round(float(s), 6) for s in result.scores],
+                    "bound_violations": int(result.violations_64d),
+                    "bound_pairs": int(result.bound_pairs),
+                    "total_excluded": int(result.total_excluded),
+                    "engine_used": result.engine_used,
+                    "latency_ms": round(latency, 3),
+                },
+                "audit": [
+                    {
+                        "doc_id": r.doc_id,
+                        "upper_bound": float(r.upper_bound),
+                        "threshold": float(r.threshold),
+                        "excluded": bool(r.excluded),
+                        "verdict": r.verdict,
+                    }
+                    for r in result.audit
+                ],
+                "signature": result.signature,
+                "signature_algorithm": result.signature_algorithm,
+            }
         receipt = worm.append(record)
     except Exception as e:
         logger.warning("Tracer-GOV bridge: WORM persist failed: %s", e)
@@ -334,7 +364,7 @@ def search(req: SearchRequest):
 @app.get("/v1/tracer/audit/{audit_id}")
 def get_audit(audit_id: str, _: str = Depends(require_api_key)):
     # Reuse the WORM store to fetch the audit record (like tracer-gov API).
-    from persistence import WormStorage
+    from winnex_tracer.persistence import WormStorage
     for key, engine in _engines.items():
         try:
             worm = WormStorage(base_path=engine.config.worm_base_path)
@@ -348,7 +378,7 @@ def get_audit(audit_id: str, _: str = Depends(require_api_key)):
 
 @app.get("/v1/tracer/audit/{audit_id}/proof")
 def get_proof(audit_id: str, _: str = Depends(require_api_key)):
-    from persistence import WormStorage
+    from winnex_tracer.persistence import WormStorage
     for engine in _engines.values():
         try:
             worm = WormStorage(base_path=engine.config.worm_base_path)
@@ -380,7 +410,7 @@ def get_proof(audit_id: str, _: str = Depends(require_api_key)):
 
 @app.post("/v1/tracer/verify", dependencies=[Depends(require_api_key)])
 def verify_audit(req: VerifyRequest):
-    from persistence import WormStorage
+    from winnex_tracer.persistence import WormStorage
     for engine in _engines.values():
         try:
             worm = WormStorage(base_path=engine.config.worm_base_path)
@@ -400,7 +430,7 @@ def verify_audit(req: VerifyRequest):
 
 @app.get("/v1/worm/verify", dependencies=[Depends(require_api_key)])
 def worm_verify():
-    from persistence import WormStorage
+    from winnex_tracer.persistence import WormStorage
     results = {}
     for key, engine in _engines.items():
         try:
@@ -414,6 +444,55 @@ def worm_verify():
         except Exception as e:
             results[key] = {"error": str(e)}
     return results
+
+
+@app.get("/v1/audit/public-key", dependencies=[Depends(require_api_key)])
+def audit_public_key():
+    """The Ed25519 public verify key — distribute to auditors.
+
+    Auditors use this to verify the signature on any WORM commitment record
+    (non-repudiation). It is derived from the private key at deploy time and
+    never changes while the same key is in use.
+    """
+    try:
+        from winnex_tracer.core import public_key_hex
+        return {
+            "public_key_hex": public_key_hex(),
+            "algorithm": "Ed25519",
+            "note": "Use to verify signature_hex on any tracer-gov commitment record.",
+        }
+    except Exception as e:
+        raise HTTPException(503, f"Signing key not configured: {e}")
+
+
+@app.post("/v1/audit/verify-signature", dependencies=[Depends(require_api_key)])
+def audit_verify_signature(req: VerifyRequest):
+    """Verify the Ed25519 signature of a stored commitment record.
+
+    Finds the record by audit_id in the WORM and verifies:
+      1. the Ed25519 signature (non-repudiation — the record was signed by
+         the trusted compliance service, not forged by a compromised engine),
+      2. the integrity hash (C++→Python consistency).
+    """
+    from winnex_tracer.persistence import WormStorage
+    for engine in _engines.values():
+        try:
+            worm = WormStorage(base_path=engine.config.worm_base_path)
+            rec = _find_audit(worm, req.audit_id)
+            if rec:
+                from core.commitment import verify_record, public_key_hex
+                pk = public_key_hex()
+                # New format: the signed commitment is the `commitment` sub-block.
+                # Legacy: the record itself carries signature_hex at the top.
+                if isinstance(rec.get("commitment"), dict):
+                    target = dict(rec["commitment"])
+                else:
+                    target = dict(rec)
+                v = verify_record(target, pk)
+                return {"audit_id": req.audit_id, **v}
+        except Exception as e:
+            logger.warning("verify-signature lookup: %s", e)
+    raise HTTPException(404, f"Audit {req.audit_id} not found")
 
 
 def _find_audit(worm, audit_id: str) -> Optional[Dict[str, Any]]:
@@ -436,6 +515,76 @@ def _find_audit(worm, audit_id: str) -> Optional[Dict[str, Any]]:
                 if data.get("audit_id") == audit_id:
                     return {**block, **data}
     return None
+
+
+# ---------------------------------------------------------------------------
+# Normalization integration (winnex-ai-normalize) — provider registration
+# and text → vector normalization, so the Liferay form can register embedding
+# providers and any client can feed text to the Madhava engine.
+# ---------------------------------------------------------------------------
+class _ProviderIn(BaseModel):
+    name: str
+    type: str = "openai_compat"
+    model: str = ""
+    base_url: str = ""
+    api_key: str = ""
+    api_key_env: str = ""
+    dim: int = 0
+    timeout: float = 20.0
+    priority: int = 10
+    enabled: bool = True
+
+
+class _NormalizeRequest(BaseModel):
+    input: List[str]
+    model: str = ""
+
+
+def _normalize_admin_required(authorization: str = Header(default="", alias="Authorization")):
+    from winnex_ai_normalize.core.provider_registry import require_admin_key
+    try:
+        require_admin_key(authorization)
+    except PermissionError as e:
+        raise HTTPException(403, str(e))
+
+
+@app.get("/v1/normalize/providers")
+def list_providers(authorization: str = Header(default="", alias="Authorization")):
+    """List registered embedding providers (secrets masked)."""
+    _normalize_admin_required(authorization)
+    from winnex_ai_normalize.core.provider_registry import get_registry
+    return {"providers": get_registry().list()}
+
+
+@app.post("/v1/normalize/providers")
+def upsert_provider(provider: _ProviderIn,
+                    authorization: str = Header(default="", alias="Authorization")):
+    """Register an embedding provider via the Liferay form (admin key)."""
+    _normalize_admin_required(authorization)
+    from winnex_ai_normalize.core.provider_registry import get_registry
+    try:
+        cfg = get_registry().upsert(provider.model_dump())
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    return {"status": "registered", "provider": cfg.name}
+
+
+@app.post("/v1/normalize/embed")
+def normalize_embed(req: _NormalizeRequest):
+    """Text → float32 vectors (via the registered embedding provider)."""
+    from winnex_ai_normalize.core.embedding import get_embedding_service
+    try:
+        vecs = get_embedding_service().embed_texts(req.input)
+    except RuntimeError as e:
+        raise HTTPException(503, str(e))
+    return {
+        "data": [
+            {"embedding": vecs[i].tolist(), "index": i, "dim": int(vecs.shape[1])}
+            for i in range(len(vecs))
+        ],
+        "model": req.model or "winnex-ai-normalize",
+        "normalized": True,
+    }
 
 
 if __name__ == "__main__":

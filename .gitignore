@@ -4,15 +4,37 @@
 !.env.example
 *.key
 *.pem
+*.p12
+*.pfx
+*secret*
+*credential*
 secrets/
 credentials/
+*.token
+*api_key*
 
-# ---- Internal engineering docs (NOT published) ----
+# ---- Internal engineering docs / analyses / prompts (NOT published) ----
 docs/ESTUDO_PONTES.md
 internal/
+internal-notes/
+*ANALISE*
+*ESTUDO*
+*PLANO*
+*PLAN*
+*PROMPT*
+*.notes.md
 
 # ---- Python / build ----
 __pycache__/
 *.pyc
-vendor/
+*.egg-info/
 dist/
+build/
+.pytest_cache/
+
+# ---- Vendored code (now from PyPI) ----
+vendor/
+
+# ---- Runtime data ----
+*.log
+*.jsonl
