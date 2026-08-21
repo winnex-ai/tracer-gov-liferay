@@ -352,8 +352,13 @@ def search(req: SearchRequest):
         "engine_used": result.engine_used,
         "latency_ms": round(latency, 3),
         "sound": int(result.violations_64d) == 0,
-        "signature": result.signature,
-        "signature_algorithm": result.signature_algorithm,
+        # No caminho 1.9.2+ (search_with_commitment) a assinatura Ed25519 está
+        # no commitment (rec["signature_hex"]); em <1.9.2 está em result.signature.
+        "signature": (result.commitment or {}).get("signature_hex", "")
+                      if result.commitment else result.signature,
+        "signature_algorithm": (result.commitment or {}).get(
+            "signature_algorithm", "Ed25519")
+            if result.commitment else result.signature_algorithm,
         "worm": {
             "block_hash": receipt.get("worm_hash", ""),
             "path": receipt.get("worm_path", ""),
