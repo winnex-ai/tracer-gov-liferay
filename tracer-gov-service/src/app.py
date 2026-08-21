@@ -33,6 +33,16 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
+# Report the ACTUAL installed engine version (winnex-madhava pip), not a
+# hardcoded string — the old "1.9.1" health string was misleading (the motor
+# in use is whatever winnex-madhava is installed).
+def _engine_version() -> str:
+    try:
+        import winnex_madhava as _wm
+        return "winnex-madhava " + str(getattr(_wm, "__version__", "?"))
+    except Exception:
+        return "winnex-madhava ?"
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("tracer-gov-bridge")
 
@@ -169,7 +179,7 @@ def _get_engine(jurisdiction: str, mode: str, state: str = ""):
 def health():
     return {
         "status": "ok",
-        "engine": "tracer-gov + winnex-madhava 1.9.1",
+        "engine": "tracer-gov + " + _engine_version(),
         "engines": list(_engines.keys()),
         "timestamp": time.time(),
     }
@@ -204,7 +214,7 @@ def build(req: BuildRequest):
         "mode": engine.config.mode,
         "N": int(getattr(engine, "_N", vectors.shape[0])),
         "dim": int(vectors.shape[1]),
-        "engine": "tracer-gov + winnex-madhava 1.9.1",
+        "engine": "tracer-gov + " + _engine_version(),
         "latency_ms": round(latency, 3),
     }
 
@@ -496,12 +506,20 @@ def audit_verify_signature(req: VerifyRequest):
 
 
 def _find_audit(worm, audit_id: str) -> Optional[Dict[str, Any]]:
-    """Search the WORM JSONL records for an audit_id."""
-    import json
-    base = worm.base_path
-    if not base.exists():
+    """Search the WORM records for an audit_id.
+
+    Uses the WormStorage O(log N) SQLite index when available; falls back to
+    the O(N) JSONL scan (the index and the chain share the same source of
+    truth). This replaces the previous linear scan (Gargalo #8).
+    """
+    if not worm.base_path.exists():
         return None
-    for f in sorted(base.rglob("records.jsonl")):
+    rec = worm.get_audit_id(audit_id)
+    if rec is not None:
+        return rec
+    # Belt-and-suspenders: legacy records not yet indexed → linear scan.
+    import json
+    for f in sorted(worm.base_path.rglob("records.jsonl")):
         with open(f) as fh:
             for line in fh:
                 line = line.strip()

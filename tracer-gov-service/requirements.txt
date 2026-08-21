@@ -1,9 +1,9 @@
 # tracer-gov-service — Government Audit Bridge for Liferay
 # Consumes winnex-tracer (unified tracer family: core + gov domain) and the
 # winnex-madhava C++20 engine from PyPI. No vendored copy.
-winnex-tracer[gov,all]>=1.0.0
-winnex-madhava>=1.9.2
-winnex-ai-normalize[all]>=1.0.1
+winnex-tracer[gov,all]>=1.1.0
+winnex-madhava>=1.9.3
+winnex-ai-normalize[all]>=1.0.2
 fastapi>=0.100
 uvicorn>=0.20
 numpy>=1.24
